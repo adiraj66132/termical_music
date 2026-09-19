@@ -1,0 +1,6 @@
+/target
+/algorithm_state.json
+/Music/*
+!/Music/.gitkeep
+/music/*
+!/music/.gitkeep
