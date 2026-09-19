@@ -12,7 +12,7 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
 };
 use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
@@ -480,7 +480,6 @@ fn ui(
         app.gfx,
         app.songs.len()
     ))
-    .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
     .block(Block::default().borders(Borders::ALL));
     f.render_widget(header, root[0]);
 
@@ -495,10 +494,7 @@ fn ui(
         .split(mid[0]);
 
     // album art (kitty/sixel when the terminal speaks them, else halfblocks)
-    let art_block = Block::default()
-        .borders(Borders::ALL)
-        .title("Art")
-        .border_style(Style::default().fg(Color::Magenta));
+    let art_block = Block::default().borders(Borders::ALL).title("Art");
     let art_area = art_block.inner(left[0]);
     f.render_widget(art_block, left[0]);
     if art_area.width > 2 && art_area.height > 0 {
@@ -518,10 +514,7 @@ fn ui(
         cur.artist, cur.title, cur.genre, app.toast
     );
     let np = Paragraph::new(np_text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Now playing")
-            .border_style(Style::default().fg(Color::Cyan)),
+        Block::default().borders(Borders::ALL).title("Now playing"),
     );
     f.render_widget(np, left[1]);
 
@@ -535,7 +528,7 @@ fn ui(
                 fmt_time(elapsed),
                 fmt_time(total)
             )))
-            .gauge_style(Style::default().fg(Color::Green))
+            .gauge_style(Style::default())
             .ratio(ratio);
         f.render_widget(g, left[2]);
     } else {
@@ -560,10 +553,7 @@ fn ui(
         })
         .collect();
     let upnext = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Up next (algorithm)")
-            .border_style(Style::default().fg(Color::Yellow)),
+        Block::default().borders(Borders::ALL).title("Up next (algorithm)"),
     );
     f.render_widget(upnext, right[0]);
 
@@ -578,10 +568,9 @@ fn ui(
         .take(h)
         .map(|(i, s)| {
             let marker = if i == app.idx { "▶" } else { " " };
+            // monochrome only: reversed cursor row, plain text otherwise
             let style = if i == app.cursor {
-                Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
-            } else if i == app.idx {
-                Style::default().fg(Color::Green)
+                Style::default().add_modifier(Modifier::REVERSED)
             } else {
                 Style::default()
             };
@@ -589,10 +578,7 @@ fn ui(
         })
         .collect();
     let lib = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Library (j/k + enter)")
-            .border_style(Style::default().fg(Color::Blue)),
+        Block::default().borders(Borders::ALL).title("Library (j/k + enter)"),
     );
     f.render_widget(lib, right[1]);
 
