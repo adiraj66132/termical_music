@@ -393,7 +393,7 @@ fn run(
             KeyCode::Char('p') | KeyCode::Char(' ') => {
                 let cur = app.songs[app.idx].clone();
                 player.toggle(&cur);
-                app.toast = if player.paused { "⏸ paused".into() } else { "▶ playing".into() };
+                app.toast = if player.paused { "paused".into() } else { "▶ playing".into() };
             }
             KeyCode::Char('j') | KeyCode::Down => app.cursor = (app.cursor + 1).min(n - 1),
             KeyCode::Char('k') | KeyCode::Up => app.cursor = app.cursor.saturating_sub(1),
@@ -474,7 +474,7 @@ fn ui(
         .split(area);
 
     // header
-    let status = if player.paused { "⏸ PAUSED" } else { "▶ PLAYING" };
+    let status = if player.paused { "PAUSED" } else { "▶ PLAYING" };
     let header = Paragraph::new(format!(
         "🎵 terminal_music  {status}  [{backend_name} · {}]   {} tracks",
         app.gfx,
