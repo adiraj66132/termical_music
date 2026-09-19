@@ -277,11 +277,13 @@ struct App {
     picker: Picker,
     art: Option<(String, StatefulProtocol)>, // cached for songs[idx].id
     gfx: String, // detected graphics protocol for the header
+    viz_t: f64,  // visualizer phase; advances only while playing
 }
 
 /// Switch track: scoring-excluded plumbing (session log, art refresh, audio) in one place.
 fn set_track(app: &mut App, player: &mut Player, st: &mut AlgorithmState, idx: usize) {
     app.idx = idx;
+    app.viz_t = 0.0;
     st.note_played(&app.songs[idx].id);
     let song = &app.songs[idx];
     let fresh = app.art.as_ref().is_none_or(|(id, _)| *id != song.id);
@@ -343,6 +345,7 @@ fn main() -> anyhow::Result<()> {
         picker: Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks()),
         art: None,
         gfx: String::new(),
+        viz_t: 0.0,
     };
     app.gfx = format!("{:?}", app.picker.protocol_type()).to_lowercase();
     let first = app.idx;
@@ -458,6 +461,32 @@ fn fmt_time(s: u64) -> String {
     format!("{:02}:{:02}", s / 60, s % 60)
 }
 
+fn song_seed(id: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish()
+}
+
+// cava-style decorative bars: purely a playing indicator. The real audio
+// plays on the Windows side, so no PCM is available here — bars dance while
+// playing (phase advances each frame) and freeze on pause. Seed per song so
+// each track gets its own shape.
+fn viz_bars(seed: u64, t: f64, n: usize) -> String {
+    const LEVELS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let mut s = String::with_capacity(n);
+    for i in 0..n {
+        let x = i as f64 * 0.55 + seed as f64 * 0.61803; // golden-ratio spread per song
+        let h = ((x + t * 2.7).sin() * 0.45
+            + (x * 2.3 - t * 4.1 + 1.7).sin() * 0.3
+            + (x * 0.6 + t * 0.9 + 4.2).sin() * 0.25)
+            * 0.5
+            + 0.5;
+        s.push(LEVELS[(h.clamp(0.0, 1.0) * 8.0).round() as usize]);
+    }
+    s
+}
+
 fn ui(
     f: &mut ratatui::Frame,
     app: &mut App,
@@ -490,7 +519,7 @@ fn ui(
 
     let left = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(12), Constraint::Min(4), Constraint::Length(3)])
+        .constraints([Constraint::Length(11), Constraint::Min(4), Constraint::Length(3), Constraint::Length(3)])
         .split(mid[0]);
 
     // album art (kitty/sixel when the terminal speaks them, else halfblocks)
@@ -518,6 +547,20 @@ fn ui(
     );
     f.render_widget(np, left[1]);
 
+    // visualizer: decorative playing indicator, frozen while paused
+    if !player.paused {
+        app.viz_t += 0.25;
+    }
+    let viz_block = Block::default()
+        .borders(Borders::ALL)
+        .title(if player.paused { "Paused" } else { "Playing" });
+    let viz_inner = viz_block.inner(left[2]);
+    f.render_widget(viz_block, left[2]);
+    if viz_inner.width > 2 {
+        let n = (viz_inner.width as usize).min(200);
+        f.render_widget(Paragraph::new(viz_bars(song_seed(&cur.id), app.viz_t, n)), viz_inner);
+    }
+
     // progress (real duration when the backend knows it)
     let elapsed = player.elapsed();
     if let Some(total) = player.duration().filter(|t| *t > 0) {
@@ -530,11 +573,11 @@ fn ui(
             )))
             .gauge_style(Style::default())
             .ratio(ratio);
-        f.render_widget(g, left[2]);
+        f.render_widget(g, left[3]);
     } else {
         let p = Paragraph::new(format!("elapsed {} (via {})", fmt_time(elapsed), backend_name))
             .block(Block::default().borders(Borders::ALL).title("Progress"));
-        f.render_widget(p, left[2]);
+        f.render_widget(p, left[3]);
     }
 
     let right = Layout::default()
@@ -614,6 +657,7 @@ mod ui_tests {
             songs, idx: 0, cursor: 1, toast: "hi".into(),
             art: Some(("a".into(), picker.new_resize_protocol(art_img))),
             gfx: "halfblocks".into(),
+            viz_t: 0.0,
             picker,
         };
         (app, st, Player::new(Backend::Simulated))
@@ -636,6 +680,16 @@ mod ui_tests {
             let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
             term.draw(|f| ui(f, &mut app, &st, &mut player, "simulated")).unwrap();
         }
+    }
+
+    #[test]
+    fn viz_bars_shape() {
+        let a = viz_bars(42, 1.0, 30);
+        assert_eq!(a.chars().count(), 30);
+        assert_eq!(a, viz_bars(42, 1.0, 30)); // deterministic
+        assert_ne!(a, viz_bars(42, 2.0, 30)); // dances with time
+        assert_ne!(a, viz_bars(43, 1.0, 30)); // differs per song
+        assert!(a.chars().any(|c| c != ' ')); // actually draws something
     }
 
     #[test]
