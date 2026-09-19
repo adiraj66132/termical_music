@@ -279,9 +279,10 @@ struct App {
     gfx: String, // detected graphics protocol for the header
 }
 
-/// Switch track: scoring-excluded plumbing (art refresh + audio) in one place.
-fn set_track(app: &mut App, player: &mut Player, idx: usize) {
+/// Switch track: scoring-excluded plumbing (session log, art refresh, audio) in one place.
+fn set_track(app: &mut App, player: &mut Player, st: &mut AlgorithmState, idx: usize) {
     app.idx = idx;
+    st.note_played(&app.songs[idx].id);
     let song = &app.songs[idx];
     let fresh = app.art.as_ref().is_none_or(|(id, _)| *id != song.id);
     if fresh {
@@ -345,7 +346,7 @@ fn main() -> anyhow::Result<()> {
     };
     app.gfx = format!("{:?}", app.picker.protocol_type()).to_lowercase();
     let first = app.idx;
-    set_track(&mut app, &mut player, first);
+    set_track(&mut app, &mut player, &mut st, first);
 
     let res = run(&mut term, &mut app, &mut st, &mut player, backend_name);
 
@@ -371,11 +372,11 @@ fn run(
     loop {
         if player.finished() {
             let s = &app.songs[app.idx];
-            st.apply("complete", &s.id, &s.artist, &s.genre);
+            st.apply("complete", &s.id, &s.artist, &s.genre, 1.0);
             st.save(STATE_FILE);
             app.toast = format!("✓ completed {} (+20)", s.title);
             let next = pick_next(&app.songs, st, Some(&s.id)).unwrap_or(app.idx);
-            set_track(app, player, next);
+            set_track(app, player, st, next);
         }
         term.draw(|f| ui(f, app, st, player, backend_name))?;
 
@@ -400,39 +401,52 @@ fn run(
                 let cur = app.songs[app.idx].clone();
                 let sel = app.cursor;
                 if sel != app.idx {
-                    st.apply("next", &cur.id, &cur.artist, &cur.genre);
-                    set_track(app, player, sel);
+                    st.apply("next", &cur.id, &cur.artist, &cur.genre, 1.0);
+                    set_track(app, player, st, sel);
                     app.toast = format!("→ playing {}", app.songs[app.idx].title);
                 }
             }
             KeyCode::Char('n') => {
                 let cur = app.songs[app.idx].clone();
-                st.apply("next", &cur.id, &cur.artist, &cur.genre);
+                st.apply("next", &cur.id, &cur.artist, &cur.genre, 1.0);
                 let next = pick_next(&app.songs, st, Some(&cur.id)).unwrap_or(app.idx);
-                set_track(app, player, next);
+                set_track(app, player, st, next);
                 app.toast = format!("→ next: {}", app.songs[app.idx].title);
             }
             KeyCode::Char('s') => {
                 let cur = app.songs[app.idx].clone();
-                st.apply("skip", &cur.id, &cur.artist, &cur.genre);
+                // position-aware: early skip stings, late skip counts as liked.
+                // Unknown length (mpv/ffplay) -> classic -15 middle tier.
+                let prog = match player.duration().filter(|t| *t > 0) {
+                    Some(total) => player.elapsed() as f32 / total as f32,
+                    None => 0.5,
+                };
+                st.apply("skip", &cur.id, &cur.artist, &cur.genre, prog);
                 st.save(STATE_FILE);
                 let next = pick_next(&app.songs, st, Some(&cur.id)).unwrap_or(app.idx);
-                set_track(app, player, next);
-                app.toast = format!("↷ skipped {} (-15)", cur.title);
+                set_track(app, player, st, next);
+                app.toast = if prog >= 0.8 {
+                    format!("↷ nearly finished {} (+10)", cur.title)
+                } else if prog < 0.3 {
+                    format!("↷ skipped early {} (-25)", cur.title)
+                } else {
+                    format!("↷ skipped {} (-15)", cur.title)
+                };
             }
             KeyCode::Char('l') => {
                 let cur = app.songs[app.idx].clone();
-                st.apply("love", &cur.id, &cur.artist, &cur.genre);
+                st.apply("love", &cur.id, &cur.artist, &cur.genre, 1.0);
                 st.save(STATE_FILE);
                 app.toast = format!("❤ loved {} (+50)", cur.title);
             }
             KeyCode::Char('d') => {
                 let cur = app.songs[app.idx].clone();
-                st.apply("dislike", &cur.id, &cur.artist, &cur.genre);
+                st.apply("dislike", &cur.id, &cur.artist, &cur.genre, 1.0);
+                st.quarantine_song(&cur.id);
                 st.save(STATE_FILE);
                 let next = pick_next(&app.songs, st, Some(&cur.id)).unwrap_or(app.idx);
-                set_track(app, player, next);
-                app.toast = format!("👎 disliked {} (-40)", cur.title);
+                set_track(app, player, st, next);
+                app.toast = format!("👎 disliked {} (-40, back in 10)", cur.title);
             }
             _ => {}
         }
@@ -607,7 +621,7 @@ mod ui_tests {
             Song { id: "b".into(), title: "Timeless".into(), artist: "Carti".into(), genre: "Rap".into(), path: "b".into() },
         ];
         let mut st = AlgorithmState::default();
-        st.apply("love", "a", "Adele", "Pop");
+        st.apply("love", "a", "Adele", "Pop", 1.0);
         let picker = Picker::halfblocks();
         let art_img = image::DynamicImage::new_rgb8(64, 64);
         let app = App {
